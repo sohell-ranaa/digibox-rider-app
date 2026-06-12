@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Production configuration: HTTPS only -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- Trust system certificates -->
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Development configuration: Allow cleartext for local network -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Local development server -->
+        <domain includeSubdomains="true">172.16.0.89</domain>
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+
+    <!-- Staging/Production: HTTPS with certificate pinning -->
+    <domain-config>
+        <domain includeSubdomains="true">api.digibox.com</domain>
+        <domain includeSubdomains="true">staging-api.digibox.com</domain>
+        <pin-set expiration="2026-12-31">
+            <!-- Public key pins (replace with actual SHA256 pins from your certificate) -->
+            <!-- Generate with: openssl x509 -in cert.pem -pubkey -noout | openssl rsa -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64 -->
+            <!-- Example pin (replace with real pin) -->
+            <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+            <!-- Backup pin (recommended) -->
+            <pin digest="SHA-256">BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=</pin>
+        </pin-set>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
