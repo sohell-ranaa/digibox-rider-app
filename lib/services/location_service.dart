@@ -7,6 +7,8 @@ import 'storage_service.dart';
 import 'api_service.dart';
 import 'kalman_gps_filter.dart';
 import 'ai_route_processor.dart';
+import 'road_snapping_service.dart'; // PHASE 3
+import 'trajectory_predictor.dart'; // PHASE 3
 import '../utils/app_logger.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
@@ -19,6 +21,8 @@ class LocationService {
   final StorageService _storage = StorageService();
   final ApiService _api = ApiService();
   final KalmanGPSFilter _kalmanFilter = KalmanGPSFilter();
+  final RoadSnappingService _roadSnapper = RoadSnappingService(); // PHASE 3
+  final TrajectoryPredictor _trajectoryPredictor = TrajectoryPredictor(); // PHASE 3
   Timer? _locationTimer;
   Timer? _batchUploadTimer;
   int? _currentDutySessionId;
@@ -62,15 +66,18 @@ class LocationService {
     _riderId = riderId;
     _api.setToken(apiService.token ?? '');
 
-    // Reset Kalman filter for new session
+    // Reset all filters for new session
     _kalmanFilter.reset();
+    _roadSnapper.reset(); // PHASE 3
+    _trajectoryPredictor.reset(); // PHASE 3
     _rawPositionBuffer.clear();
 
-    AppLogger.i('🚀 [AI Tracking] Starting UBER-LIKE tracking with AI processing...');
+    AppLogger.i('🚀 [AI Tracking] Starting UBER-LIKE tracking with PHASE 3 AI...');
     AppLogger.i('   ⚡ STOPPED: 30s intervals | SLOW: 10s | NORMAL: 3s | FAST: 1s');
-    AppLogger.i('   🤖 AI: Kalman filter + outlier detection + smart compression');
+    AppLogger.i('   🤖 AI: Adaptive Kalman + Road Snapping + Trajectory Prediction');
     AppLogger.i('   📤 Batch upload: Every ${AppConstants.batchUploadIntervalMinutes} min');
     AppLogger.i('   🔴 REAL-TIME: Streaming to server for live map');
+    AppLogger.i('   🎯 TARGET: 80-90% GPS points <10m accuracy');
 
     // GPS WARM-UP: Get 3 readings to improve initial accuracy
     AppLogger.i('🔥 [GPS Warm-Up] Warming up GPS for better accuracy...');
@@ -132,6 +139,8 @@ class LocationService {
     _lastRawPosition = null;
     _currentInterval = const Duration(seconds: 3); // Reset to normal speed default
     _kalmanFilter.reset(); // Reset Kalman filter
+    _roadSnapper.reset(); // PHASE 3: Reset road snapping
+    _trajectoryPredictor.reset(); // PHASE 3: Reset trajectory prediction
     _rawPositionBuffer.clear(); // Clear buffer
   }
 
@@ -158,18 +167,40 @@ class LocationService {
         return;
       }
 
-      // ===  KALMAN FILTER ===
-      // Apply Kalman filter for smooth, noise-reduced position
-      final filteredPosition = _kalmanFilter.filter(rawPosition);
+      // === PHASE 3: ADVANCED GPS PROCESSING PIPELINE ===
+
+      // Step 1: Kalman Filter (adaptive noise, outlier rejection)
+      final kalmanFiltered = _kalmanFilter.filter(rawPosition);
+
+      // Step 2: Trajectory Prediction (validate against expected path)
+      _trajectoryPredictor.addPosition(kalmanFiltered);
+      final isValidTrajectory = _trajectoryPredictor.validatePosition(kalmanFiltered);
+
+      Position filteredPosition;
+      if (!isValidTrajectory) {
+        // GPS deviated from expected trajectory, try to correct
+        final correctedPosition = _trajectoryPredictor.getCorrectedPosition(kalmanFiltered);
+        if (correctedPosition != null) {
+          AppLogger.w('📐 [Phase 3] Trajectory correction applied');
+          filteredPosition = correctedPosition;
+        } else {
+          filteredPosition = kalmanFiltered;
+        }
+      } else {
+        filteredPosition = kalmanFiltered;
+      }
+
+      // Step 3: Road Snapping (align to logical road path)
+      final snappedPosition = _roadSnapper.snapToRoad(filteredPosition);
 
       // Store raw position for activity detection
       _lastRawPosition = rawPosition;
 
       // Add to buffer for AI processing during upload
-      _rawPositionBuffer.add(filteredPosition);
+      _rawPositionBuffer.add(snappedPosition);
 
       // Detect activity and adjust interval (UBER-LIKE HIGH-FREQUENCY)
-      final activity = AIRouteProcessor.detectActivity(filteredPosition.speed);
+      final activity = AIRouteProcessor.detectActivity(snappedPosition.speed);
       Duration newInterval;
 
       switch (activity) {
@@ -200,8 +231,8 @@ class LocationService {
         final driftDistance = Geolocator.distanceBetween(
           _lastValidPosition!.latitude,
           _lastValidPosition!.longitude,
-          filteredPosition.latitude,
-          filteredPosition.longitude,
+          snappedPosition.latitude,
+          snappedPosition.longitude,
         );
 
         if (driftDistance < AppConstants.stoppedDriftThreshold) {
@@ -209,16 +240,19 @@ class LocationService {
         }
       }
 
-      // Save filtered position to local database
+      // Calculate GPS quality confidence score (PHASE 3)
+      final confidenceScore = _calculateConfidenceScore(rawPosition, snappedPosition);
+
+      // Save PHASE 3 processed position to local database
       final locationPoint = LocationPoint(
         riderId: _riderId,
         dutySessionId: _currentDutySessionId!,
-        latitude: filteredPosition.latitude,
-        longitude: filteredPosition.longitude,
-        accuracy: filteredPosition.accuracy,
-        speed: filteredPosition.speed,
-        bearing: filteredPosition.heading,
-        altitude: filteredPosition.altitude,
+        latitude: snappedPosition.latitude,
+        longitude: snappedPosition.longitude,
+        accuracy: snappedPosition.accuracy,
+        speed: snappedPosition.speed,
+        bearing: snappedPosition.heading,
+        altitude: snappedPosition.altitude,
         recordedAt: DateTime.now(),
         isSynced: false,
       );
@@ -227,16 +261,17 @@ class LocationService {
       await _storage.saveLocation(locationPoint);
 
       // Update last valid position
-      _lastValidPosition = filteredPosition;
+      _lastValidPosition = snappedPosition;
 
-      final speedKmh = (filteredPosition.speed * 3.6).toStringAsFixed(1);
+      final speedKmh = (snappedPosition.speed * 3.6).toStringAsFixed(1);
       final activityIcon = activity == 'stopped' ? '🛑' :
                           activity == 'slow' ? '🚶' :
                           activity == 'normal' ? '🚗' : '⚡';
-      AppLogger.d('$activityIcon GPS: (${filteredPosition.latitude.toStringAsFixed(6)}, ${filteredPosition.longitude.toStringAsFixed(6)}) | Speed: ${speedKmh} km/h | Activity: $activity');
+      final confidenceIcon = confidenceScore > 0.8 ? '🎯' : confidenceScore > 0.6 ? '✅' : '⚠️';
+      AppLogger.d('$activityIcon$confidenceIcon GPS: (${snappedPosition.latitude.toStringAsFixed(6)}, ${snappedPosition.longitude.toStringAsFixed(6)}) | Acc: ${snappedPosition.accuracy.toStringAsFixed(1)}m | Speed: ${speedKmh} km/h | Conf: ${(confidenceScore * 100).toStringAsFixed(0)}%');
 
       // REAL-TIME STREAMING: Send immediately to server for live map (only if good accuracy)
-      if (filteredPosition.accuracy < 30) {
+      if (snappedPosition.accuracy < 30) {
         _streamLocationToServer(locationPoint);
       }
 
@@ -343,6 +378,38 @@ class LocationService {
 
     print('✅ GPS ACCEPTED: Accuracy ${newPosition.accuracy.toStringAsFixed(1)}m, Speed ${(newPosition.speed * 3.6).toStringAsFixed(1)} km/h');
     return true;
+  }
+
+  // PHASE 3: Calculate GPS confidence score (0.0 - 1.0)
+  double _calculateConfidenceScore(Position rawPosition, Position processedPosition) {
+    double score = 1.0;
+
+    // Factor 1: GPS Accuracy (most important)
+    if (rawPosition.accuracy < 5) {
+      score *= 1.0; // Excellent
+    } else if (rawPosition.accuracy < 10) {
+      score *= 0.9; // Very good
+    } else if (rawPosition.accuracy < 20) {
+      score *= 0.75; // Good
+    } else if (rawPosition.accuracy < 40) {
+      score *= 0.5; // Fair
+    } else {
+      score *= 0.3; // Poor
+    }
+
+    // Factor 2: Trajectory Prediction Confidence
+    final trajectoryStats = _trajectoryPredictor.getStats();
+    if (trajectoryStats['confidence'] != null) {
+      score *= (trajectoryStats['confidence'] * 0.5 + 0.5); // 50-100% weight
+    }
+
+    // Factor 3: Processing adjustments
+    final processingAdjustment = (processedPosition.accuracy - rawPosition.accuracy).abs();
+    if (processingAdjustment > 10) {
+      score *= 0.8; // Large correction applied
+    }
+
+    return score.clamp(0.0, 1.0);
   }
 
   // REAL-TIME STREAMING: Send location immediately to server (non-blocking)
