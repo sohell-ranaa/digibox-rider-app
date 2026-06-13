@@ -70,6 +70,11 @@ class LocationService {
     AppLogger.i('   ⚡ STOPPED: 30s intervals | SLOW: 10s | NORMAL: 3s | FAST: 1s');
     AppLogger.i('   🤖 AI: Kalman filter + outlier detection + smart compression');
     AppLogger.i('   📤 Batch upload: Every ${AppConstants.batchUploadIntervalMinutes} min');
+    AppLogger.i('   🔴 REAL-TIME: Streaming to server for live map');
+
+    // GPS WARM-UP: Get 3 readings to improve initial accuracy
+    AppLogger.i('🔥 [GPS Warm-Up] Warming up GPS for better accuracy...');
+    await _warmUpGPS();
 
     // Record location immediately
     await _recordLocation();
@@ -86,6 +91,23 @@ class LocationService {
       },
     );
     AppLogger.i('⏰ [Timer] Batch upload timer started - will run every ${AppConstants.batchUploadIntervalMinutes} minutes');
+  }
+
+  // GPS Warm-Up: Get 3 readings to stabilize GPS for better initial accuracy
+  Future<void> _warmUpGPS() async {
+    try {
+      for (int i = 0; i < 3; i++) {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.best,
+          timeLimit: const Duration(seconds: 5),
+        );
+        AppLogger.i('🔥 [Warm-Up ${i+1}/3] Accuracy: ${pos.accuracy.toStringAsFixed(1)}m');
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+      AppLogger.i('✅ [GPS Warm-Up] Complete! GPS should be accurate now.');
+    } catch (e) {
+      AppLogger.w('⚠️ [GPS Warm-Up] Failed: $e (continuing anyway)');
+    }
   }
 
   // Schedule next location check with adaptive interval
@@ -118,12 +140,12 @@ class LocationService {
     try {
       if (_currentDutySessionId == null) return;
 
-      // Get raw GPS reading
+      // Get raw GPS reading with AGGRESSIVE settings for 5-10m accuracy
       Position? rawPosition;
       try {
         rawPosition = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.bestForNavigation, // Highest accuracy for Uber-like tracking
-          timeLimit: const Duration(seconds: 10),
+          desiredAccuracy: LocationAccuracy.best, // CHANGED: best instead of bestForNavigation for tighter accuracy
+          timeLimit: const Duration(seconds: 5), // CHANGED: Reduced from 10s to 5s for faster acquisition
         );
       } catch (e) {
         AppLogger.w('⚠️ GPS acquisition failed: $e');
@@ -213,6 +235,11 @@ class LocationService {
                           activity == 'normal' ? '🚗' : '⚡';
       AppLogger.d('$activityIcon GPS: (${filteredPosition.latitude.toStringAsFixed(6)}, ${filteredPosition.longitude.toStringAsFixed(6)}) | Speed: ${speedKmh} km/h | Activity: $activity');
 
+      // REAL-TIME STREAMING: Send immediately to server for live map (only if good accuracy)
+      if (filteredPosition.accuracy < 30) {
+        _streamLocationToServer(locationPoint);
+      }
+
       // Note: Batch upload with AI processing happens every 2 minutes
     } catch (e) {
       AppLogger.e('❌ Error recording location: $e');
@@ -245,11 +272,15 @@ class LocationService {
     return false;
   }
 
-  // ✅ STRICT GPS validation - only accept high-quality points
+  // ✅ MULTI-TIER GPS validation - accept more points with confidence levels
   bool _isValidGPSPoint(Position newPosition) {
-    // 1. STRICT ACCURACY CHECK: Only accept high-quality GPS (< 20 meters)
-    if (newPosition.accuracy > 20) {
-      print('⚠️ GPS REJECTED: Poor accuracy ${newPosition.accuracy.toStringAsFixed(1)}m (need <20m)');
+    // 1. MULTI-TIER ACCURACY CHECK: Accept GPS up to 50m (was 20m)
+    // TIER 1 (<10m): Excellent - use directly
+    // TIER 2 (10-20m): Good - will apply strong filtering
+    // TIER 3 (20-50m): Fair - use only if recent
+    // TIER 4 (>50m): Poor - reject
+    if (newPosition.accuracy > 50) {
+      print('⚠️ GPS REJECTED: Poor accuracy ${newPosition.accuracy.toStringAsFixed(1)}m (need <50m)');
       return false;
     }
 
@@ -312,6 +343,21 @@ class LocationService {
 
     print('✅ GPS ACCEPTED: Accuracy ${newPosition.accuracy.toStringAsFixed(1)}m, Speed ${(newPosition.speed * 3.6).toStringAsFixed(1)} km/h');
     return true;
+  }
+
+  // REAL-TIME STREAMING: Send location immediately to server (non-blocking)
+  void _streamLocationToServer(LocationPoint location) async {
+    try {
+      // Fire and forget - don't wait for response (non-blocking)
+      _api.streamLocation(location).then((_) {
+        // Success - map will update in real-time
+      }).catchError((e) {
+        // Fail silently - batch upload will catch it later
+        AppLogger.w('⚠️ [Stream] Failed: $e (batch will retry)');
+      });
+    } catch (e) {
+      // Fail silently - don't block GPS recording
+    }
   }
 
   // Public method to manually trigger batch upload (called when internet returns)

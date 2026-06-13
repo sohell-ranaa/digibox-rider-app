@@ -272,6 +272,24 @@ class ApiService {
     }
   }
 
+  // REAL-TIME STREAMING: Send single location immediately (non-blocking)
+  Future<void> streamLocation(LocationPoint location) async {
+    try {
+      final response = await _httpClient.post(
+        Uri.parse(ApiConfig.locationStream),
+        headers: _getHeaders(),
+        body: jsonEncode(location.toJson()),
+      ).timeout(const Duration(seconds: 3)); // Quick timeout - don't block
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        debugPrint('⚠️ [Stream] Failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      // Fail silently - batch upload will catch it
+      debugPrint('⚠️ [Stream] Error: $e');
+    }
+  }
+
   Future<void> bulkRecordLocations(List<LocationPoint> locations) async {
     try {
       debugPrint('📤 [API] Bulk upload: ${locations.length} locations to ${ApiConfig.locationBulk}');

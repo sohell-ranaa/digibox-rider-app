@@ -55,6 +55,7 @@ class ApiConfig {
   // Location endpoints
   static String get locationRecord => '$baseUrl/locations/record';
   static String get locationBulk => '$baseUrl/locations/bulk';
+  static String get locationStream => '$baseUrl/locations/stream'; // Real-time streaming
   static String get installations => '$baseUrl/installations';
 
   // Events endpoints
