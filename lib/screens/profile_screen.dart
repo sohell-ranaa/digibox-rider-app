@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
@@ -10,8 +11,30 @@ import 'login_screen.dart';
 import 'change_password_screen.dart';
 
 /// Profile screen - rider profile and settings
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  String _version = '';
+  String _buildNumber = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    setState(() {
+      _version = packageInfo.version;
+      _buildNumber = packageInfo.buildNumber;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -171,31 +194,25 @@ class ProfileScreen extends StatelessWidget {
 
   Widget _buildAboutSection(BuildContext context) {
     return SimpleCard(
-      padding: const EdgeInsets.all(20),
-      child: Row(
+      padding: const EdgeInsets.all(24),
+      child: Column(
         children: [
-          const Icon(Icons.info_outline, color: AppColors.primary, size: 28),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'App Version',
-                  style: AppTypography.labelMedium.copyWith(
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '1.2.11',
-                  style: AppTypography.titleMedium.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+          _buildInfoRow(
+            icon: Icons.info_outline,
+            label: 'App Version',
+            value: _version.isEmpty ? 'Loading...' : 'v$_version',
+          ),
+          const SizedBox(height: 20),
+          _buildInfoRow(
+            icon: Icons.build_outlined,
+            label: 'Build Number',
+            value: _buildNumber.isEmpty ? '-' : _buildNumber,
+          ),
+          const SizedBox(height: 20),
+          _buildInfoRow(
+            icon: Icons.phone_android_outlined,
+            label: 'App Name',
+            value: 'Digibox Rider Tracker',
           ),
         ],
       ),

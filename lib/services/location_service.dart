@@ -244,6 +244,23 @@ class LocationService {
       final confidenceScore = _calculateConfidenceScore(rawPosition, snappedPosition);
 
       // Save PHASE 3 processed position to local database
+      // CRITICAL: Convert to Bangladesh time (UTC+6) regardless of device timezone
+      // Strategy: Device time → UTC → Bangladesh time (UTC+6) as local DateTime
+      // This ensures consistent timestamps whether rider is in Malaysia (UTC+8) or Bangladesh (UTC+6)
+      final utcNow = DateTime.now().toUtc(); // Get current time in UTC
+      final utcPlus6 = utcNow.add(const Duration(hours: 6)); // UTC + 6 hours
+      // Create as local DateTime (not UTC) so toIso8601String() doesn't add 'Z'
+      final bangladeshTime = DateTime(
+        utcPlus6.year,
+        utcPlus6.month,
+        utcPlus6.day,
+        utcPlus6.hour,
+        utcPlus6.minute,
+        utcPlus6.second,
+        utcPlus6.millisecond,
+        utcPlus6.microsecond,
+      ); // This creates a local DateTime representing Bangladesh time
+
       final locationPoint = LocationPoint(
         riderId: _riderId,
         dutySessionId: _currentDutySessionId!,
@@ -253,7 +270,7 @@ class LocationService {
         speed: snappedPosition.speed,
         bearing: snappedPosition.heading,
         altitude: snappedPosition.altitude,
-        recordedAt: DateTime.now(),
+        recordedAt: bangladeshTime, // Always Bangladesh time (UTC+6)
         isSynced: false,
       );
 

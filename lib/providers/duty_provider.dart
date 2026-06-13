@@ -22,6 +22,7 @@ class DutyProvider with ChangeNotifier {
   Duration _currentDuration = Duration.zero;
   String? _lastError;
   bool _hasPendingStopSync = false;
+  Timer? _retryTimer;
 
   DutySession? get currentSession => _currentSession;
   bool get isOnline => _isOnline;
@@ -268,10 +269,16 @@ class DutyProvider with ChangeNotifier {
 
       debugPrint('✅ [DutyProvider] Local stop successful, rider is now OFFLINE');
 
-      // STEP 2: Try to sync with server (non-blocking, failures are OK)
-      debugPrint('🛑 [DutyProvider] Step 2: Attempting server sync...');
+      // STEP 2: Try to sync with server (with 5-second timeout)
+      debugPrint('🛑 [DutyProvider] Step 2: Attempting server sync (5s timeout)...');
       try {
-        final stoppedSession = await apiService.stopDuty();
+        final stoppedSession = await apiService.stopDuty().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {
+            debugPrint('⏱️ [DutyProvider] Server sync timeout after 5 seconds');
+            throw Exception('Server sync timeout');
+          },
+        );
         debugPrint('✅ [DutyProvider] Server sync successful');
         _currentSession = stoppedSession;
         _hasPendingStopSync = false;
@@ -285,6 +292,9 @@ class DutyProvider with ChangeNotifier {
         _hasPendingStopSync = true;
         await _savePendingStopSync();
         notifyListeners();
+
+        // Trigger immediate background retry (don't wait for app restart)
+        _scheduleImmediateRetry(apiService);
 
         // Don't set error message - this is expected in offline scenarios
       }
@@ -384,7 +394,41 @@ class DutyProvider with ChangeNotifier {
     await prefs.remove(AppConstants.keyPendingStopSync);
     await prefs.remove(AppConstants.keyPendingStopSessionId);
     await prefs.remove(AppConstants.keyPendingStopTime);
+    _retryTimer?.cancel();
+    _retryTimer = null;
     debugPrint('✅ [Sync] Pending stop sync cleared');
+  }
+
+  // Schedule immediate retry attempts (every 10 seconds for 1 minute)
+  void _scheduleImmediateRetry(ApiService apiService) {
+    debugPrint('🔄 [Retry] Scheduling immediate retry attempts...');
+
+    int attemptCount = 0;
+    const maxAttempts = 6; // 6 attempts x 10 seconds = 1 minute
+
+    _retryTimer?.cancel();
+    _retryTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      attemptCount++;
+      debugPrint('🔄 [Retry] Attempt $attemptCount/$maxAttempts to sync stop duty...');
+
+      try {
+        await apiService.stopDuty().timeout(const Duration(seconds: 5));
+        debugPrint('✅ [Retry] Sync successful on attempt $attemptCount!');
+
+        _hasPendingStopSync = false;
+        await _clearPendingStopSync();
+        notifyListeners();
+
+        timer.cancel();
+      } catch (e) {
+        debugPrint('❌ [Retry] Attempt $attemptCount failed: $e');
+
+        if (attemptCount >= maxAttempts) {
+          debugPrint('⚠️ [Retry] Max attempts reached. Will retry on app restart.');
+          timer.cancel();
+        }
+      }
+    });
   }
 
   // Start duration timer

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
@@ -20,6 +21,22 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
+  String _version = '';
+  String _buildNumber = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    setState(() {
+      _version = packageInfo.version;
+      _buildNumber = packageInfo.buildNumber;
+    });
+  }
 
   @override
   void dispose() {
@@ -204,12 +221,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: AppSpacing.xxxl),
 
-                  // Version
+                  // Version Info
                   Text(
-                    'Version 1.2.11',
-                    style: AppTypography.labelMedium.copyWith(
-                      color: Colors.white70,
+                    _version.isEmpty
+                        ? 'Loading...'
+                        : 'v$_version (Build $_buildNumber)',
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.textSecondary,
                     ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),

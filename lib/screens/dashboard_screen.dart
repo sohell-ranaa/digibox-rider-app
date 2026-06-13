@@ -325,8 +325,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ),
-                // Force sync button (only show when online)
-                if (dutyProvider.isOnline) ...[
+                // Force sync button (show when online OR when there are pending syncs)
+                if (dutyProvider.isOnline || _pendingSync > 0) ...[
                   const SizedBox(height: 16),
                   OutlinedButton.icon(
                     onPressed: dutyProvider.isLoading
